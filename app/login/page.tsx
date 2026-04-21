@@ -1,6 +1,6 @@
 'use client'
 
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
@@ -12,6 +12,13 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) router.replace('/')
+    })
+  }, [router])
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setLoading(true)
@@ -19,7 +26,7 @@ export default function LoginPage() {
 
     const { error } = mode === 'signin'
       ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password })
+      : await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/login` } })
 
     if (error) {
       setError(error.message)
