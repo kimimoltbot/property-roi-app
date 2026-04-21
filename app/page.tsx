@@ -1,30 +1,48 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import AuthGate from '@/components/AuthGate'
 import { supabase } from '@/lib/supabase'
+import { DEFAULT_SCENARIO, FINAL_FOUR_DEALS, GHOST_DEAL_ID } from '@/lib/roi/samples'
+import { Horizon, Mode } from '@/lib/roi/types'
+import { formatMoneyMonospace, formatPctMonospace, selectComparativeRows } from '@/lib/roi/selectors'
 
-type Mode = 'conservative' | 'marketing'
-
-const deal = {
-  name: 'Vista River Gardens',
-  postcode: 'M1 7ED',
-  dlaStart: 111082,
-  conservative: { eta: 31, repaid20y: 17588, breakEven: 6.0, cliff: 'watch' },
-  marketing: { eta: 27, repaid20y: 23500, breakEven: 6.0, cliff: 'watch' },
-}
+const HORIZONS: Horizon[] = [5, 10, 15, 20]
 
 export default function Home() {
-  const [mode, setMode] = useState<Mode>('conservative')
-  const v = mode === 'conservative' ? deal.conservative : deal.marketing
-  const pct = Math.min(100, (v.repaid20y / deal.dlaStart) * 100)
+  const [mode, setMode] = useState<Mode>(DEFAULT_SCENARIO.mode)
+  const [horizon, setHorizon] = useState<Horizon>(DEFAULT_SCENARIO.horizon)
+  const [includeGhost, setIncludeGhost] = useState(false)
+
+  const rows = useMemo(
+    () =>
+      selectComparativeRows({
+        deals: FINAL_FOUR_DEALS,
+        ghostDeal: includeGhost
+          ? {
+              id: GHOST_DEAL_ID,
+              name: 'Ghost Deal',
+              postcode: 'TBD',
+              dlaStart: 100000,
+              loanAmount: 280000,
+              annualRent: 25200,
+              annualCosts: 7200,
+              initialRate: 0.035,
+              annualCashflowConservative: 800,
+              annualCashflowMarketing: 2100,
+            }
+          : undefined,
+        scenario: { mode, horizon },
+      }),
+    [mode, horizon, includeGhost],
+  )
 
   return (
     <AuthGate>
       <main className="min-h-screen bg-gray-50 p-4">
-        <div className="max-w-md mx-auto">
-          <div className="flex items-center justify-between mb-4">
-            <h1 className="text-xl font-bold">Property ROI</h1>
+        <div className="max-w-5xl mx-auto space-y-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-bold">Property ROI Comparative</h1>
             <button
               onClick={async () => {
                 await supabase.auth.signOut()
@@ -36,45 +54,79 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="bg-white rounded-2xl border border-gray-200 shadow p-4 space-y-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="font-semibold text-gray-900">{deal.name}</h2>
-                <p className="text-xs text-gray-500">{deal.postcode}</p>
-              </div>
-              <span className="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700 uppercase">{v.cliff}</span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-gray-50 rounded-lg p-2">
-                <p className="text-[11px] text-gray-500">DLA ETA</p>
-                <p className="font-bold">Year {v.eta}</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-2">
-                <p className="text-[11px] text-gray-500">2030 Break-even</p>
-                <p className="font-bold">{v.breakEven.toFixed(1)}%</p>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex justify-between text-[11px] text-gray-600 mb-1">
-                <span>DLA Progress (20Y)</span>
-                <span>£{v.repaid20y.toLocaleString()} / £{deal.dlaStart.toLocaleString()}</span>
-              </div>
-              <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-600" style={{ width: `${pct}%` }} />
-              </div>
-            </div>
-
+          <div className="bg-white rounded-xl p-3 border flex flex-wrap gap-2 items-center">
             <div className="grid grid-cols-2 gap-2 bg-gray-100 p-1 rounded-lg">
-              <button onClick={() => setMode('conservative')} className={`py-2 rounded-md text-sm ${mode === 'conservative' ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>
-                Conservative (3.0%)
+              <button onClick={() => setMode('conservative')} className={`px-3 py-2 rounded text-sm ${mode === 'conservative' ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>
+                Conservative
               </button>
-              <button onClick={() => setMode('marketing')} className={`py-2 rounded-md text-sm ${mode === 'marketing' ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>
-                Marketing (3.5%)
+              <button onClick={() => setMode('marketing')} className={`px-3 py-2 rounded text-sm ${mode === 'marketing' ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>
+                Marketing
               </button>
             </div>
+
+            <div className="grid grid-cols-4 gap-1 bg-gray-100 p-1 rounded-lg">
+              {HORIZONS.map((h) => (
+                <button key={h} onClick={() => setHorizon(h)} className={`px-2 py-2 rounded text-sm ${horizon === h ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>
+                  {h}Y
+                </button>
+              ))}
+            </div>
+
+            <button onClick={() => setIncludeGhost((s) => !s)} className="ml-auto px-3 py-2 text-sm border rounded-lg">
+              {includeGhost ? 'Remove Ghost' : 'Add Ghost'}
+            </button>
           </div>
+
+          <div className="bg-white rounded-xl border overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="text-left p-2">Deal</th>
+                  <th className="text-left p-2">DLA ETA</th>
+                  <th className="text-left p-2">Repaid</th>
+                  <th className="text-left p-2">Remaining</th>
+                  <th className="text-left p-2">Break-even Y6</th>
+                  <th className="text-left p-2">Status</th>
+                  <th className="text-left p-2">Div/Salary</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.dealId} className="border-t">
+                    <td className="p-2 font-medium">{FINAL_FOUR_DEALS.find((d) => d.id === row.dealId)?.name ?? 'Ghost Deal'}</td>
+                    <td className="p-2 font-mono">{row.etaYear ? `Year ${row.etaYear}` : '>' + horizon}</td>
+                    <td className="p-2 font-mono whitespace-pre">{formatMoneyMonospace(row.repaidByHorizon)}</td>
+                    <td className="p-2 font-mono whitespace-pre">{formatMoneyMonospace(row.dlaRemaining)}</td>
+                    <td className="p-2 font-mono whitespace-pre">{formatPctMonospace(row.breakEvenYear6Pct)}</td>
+                    <td className="p-2">
+                      <span className={`text-xs px-2 py-1 rounded-full uppercase ${row.refinanceAlert ? 'bg-red-100 text-red-700' : row.cliffBadge === 'safe' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {row.refinanceAlert ? 'refi alert' : row.cliffBadge}
+                      </span>
+                    </td>
+                    <td className="p-2 font-mono whitespace-pre">{formatMoneyMonospace(row.dividendOrSalaryByHorizon)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {mode === 'conservative' && (
+            <div className="bg-white rounded-xl p-3 border">
+              <p className="text-sm font-semibold mb-2">2030 Cliff Stress (Year 6 rates: 4/6/8)</p>
+              <div className="grid md:grid-cols-4 gap-2">
+                {rows.map((row) => (
+                  <div key={`${row.dealId}-stress`} className="border rounded-lg p-2">
+                    <p className="font-medium mb-1">{FINAL_FOUR_DEALS.find((d) => d.id === row.dealId)?.name ?? 'Ghost Deal'}</p>
+                    {row.stress2030?.map((s) => (
+                      <p key={s.rate} className="font-mono text-xs whitespace-pre">
+                        {(s.rate * 100).toFixed(0)}%: {formatMoneyMonospace(s.freeCashYear6)}
+                      </p>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </AuthGate>
