@@ -3,130 +3,103 @@
 import { useMemo, useState } from 'react'
 import AuthGate from '@/components/AuthGate'
 import { supabase } from '@/lib/supabase'
-import { DEFAULT_SCENARIO, FINAL_FOUR_DEALS, GHOST_DEAL_ID } from '@/lib/roi/samples'
-import { Horizon, Mode } from '@/lib/roi/types'
-import { formatMoneyMonospace, formatPctMonospace, selectComparativeRows } from '@/lib/roi/selectors'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-const HORIZONS: Horizon[] = [5, 10, 15, 20]
+type Mode = 'conservative' | 'marketing'
+
+const deal = {
+  name: 'Vista River Gardens',
+  postcode: 'M1 7ED',
+  dlaStart: 111082,
+  conservative: { eta: 31, repaid20y: 17588, breakEven: 6.0 },
+  marketing: { eta: 27, repaid20y: 23500, breakEven: 6.0 },
+}
+
+function getCliffHealthVariant(score: number) {
+  if (score < 6) return { label: 'Red', variant: 'cliffRed' as const }
+  if (score <= 7) return { label: 'Watch', variant: 'cliffAmber' as const }
+  return { label: 'Healthy', variant: 'cliffGreen' as const }
+}
+
+function getDlaEtaVariant(eta: number) {
+  if (!Number.isFinite(eta)) return { label: 'Never', variant: 'dlaRed' as const }
+  if (eta <= 15) return { label: `Year ${eta}`, variant: 'dlaGreen' as const }
+  if (eta <= 30) return { label: `Year ${eta}`, variant: 'dlaAmber' as const }
+  return { label: `Year ${eta}`, variant: 'dlaRed' as const }
+}
 
 export default function Home() {
-  const [mode, setMode] = useState<Mode>(DEFAULT_SCENARIO.mode)
-  const [horizon, setHorizon] = useState<Horizon>(DEFAULT_SCENARIO.horizon)
-  const [includeGhost, setIncludeGhost] = useState(false)
+  const [mode, setMode] = useState<Mode>('conservative')
+  const v = mode === 'conservative' ? deal.conservative : deal.marketing
 
-  const rows = useMemo(
-    () =>
-      selectComparativeRows({
-        deals: FINAL_FOUR_DEALS,
-        ghostDeal: includeGhost
-          ? {
-              id: GHOST_DEAL_ID,
-              name: 'Ghost Deal',
-              postcode: 'TBD',
-              dlaStart: 100000,
-              loanAmount: 280000,
-              annualRent: 25200,
-              annualCosts: 7200,
-              initialRate: 0.035,
-              annualCashflowConservative: 800,
-              annualCashflowMarketing: 2100,
-            }
-          : undefined,
-        scenario: { mode, horizon },
-      }),
-    [mode, horizon, includeGhost],
-  )
+  const metrics = useMemo(() => {
+    const pct = Math.min(100, (v.repaid20y / deal.dlaStart) * 100)
+    const cliff = getCliffHealthVariant(v.breakEven)
+    const eta = getDlaEtaVariant(v.eta)
+    return { pct, cliff, eta }
+  }, [v])
 
   return (
     <AuthGate>
-      <main className="min-h-screen bg-gray-50 p-4">
-        <div className="max-w-5xl mx-auto space-y-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-xl font-bold">Property ROI Comparative</h1>
+      <main className="min-h-screen bg-background p-3">
+        <div className="mx-auto max-w-md space-y-3">
+          <div className="mb-1 flex items-center justify-between">
+            <h1 className="text-lg font-semibold tracking-tight">Property ROI</h1>
             <button
               onClick={async () => {
                 await supabase.auth.signOut()
                 window.location.href = '/login'
               }}
-              className="text-sm px-3 py-1.5 border rounded-lg bg-white"
+              className="rounded border border-border bg-panel px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
             >
               Logout
             </button>
           </div>
 
-          <div className="bg-white rounded-xl p-3 border flex flex-wrap gap-2 items-center">
-            <div className="grid grid-cols-2 gap-2 bg-gray-100 p-1 rounded-lg">
-              <button onClick={() => setMode('conservative')} className={`px-3 py-2 rounded text-sm ${mode === 'conservative' ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>
-                Conservative
-              </button>
-              <button onClick={() => setMode('marketing')} className={`px-3 py-2 rounded text-sm ${mode === 'marketing' ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>
-                Marketing
-              </button>
-            </div>
-
-            <div className="grid grid-cols-4 gap-1 bg-gray-100 p-1 rounded-lg">
-              {HORIZONS.map((h) => (
-                <button key={h} onClick={() => setHorizon(h)} className={`px-2 py-2 rounded text-sm ${horizon === h ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>
-                  {h}Y
-                </button>
-              ))}
-            </div>
-
-            <button onClick={() => setIncludeGhost((s) => !s)} className="ml-auto px-3 py-2 text-sm border rounded-lg">
-              {includeGhost ? 'Remove Ghost' : 'Add Ghost'}
-            </button>
-          </div>
-
-          <div className="bg-white rounded-xl border overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="text-left p-2">Deal</th>
-                  <th className="text-left p-2">DLA ETA</th>
-                  <th className="text-left p-2">Repaid</th>
-                  <th className="text-left p-2">Remaining</th>
-                  <th className="text-left p-2">Break-even Y6</th>
-                  <th className="text-left p-2">Status</th>
-                  <th className="text-left p-2">Div/Salary</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.dealId} className="border-t">
-                    <td className="p-2 font-medium">{FINAL_FOUR_DEALS.find((d) => d.id === row.dealId)?.name ?? 'Ghost Deal'}</td>
-                    <td className="p-2 font-mono">{row.etaYear ? `Year ${row.etaYear}` : '>' + horizon}</td>
-                    <td className="p-2 font-mono whitespace-pre">{formatMoneyMonospace(row.repaidByHorizon)}</td>
-                    <td className="p-2 font-mono whitespace-pre">{formatMoneyMonospace(row.dlaRemaining)}</td>
-                    <td className="p-2 font-mono whitespace-pre">{formatPctMonospace(row.breakEvenYear6Pct)}</td>
-                    <td className="p-2">
-                      <span className={`text-xs px-2 py-1 rounded-full uppercase ${row.refinanceAlert ? 'bg-red-100 text-red-700' : row.cliffBadge === 'safe' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {row.refinanceAlert ? 'refi alert' : row.cliffBadge}
-                      </span>
-                    </td>
-                    <td className="p-2 font-mono whitespace-pre">{formatMoneyMonospace(row.dividendOrSalaryByHorizon)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {mode === 'conservative' && (
-            <div className="bg-white rounded-xl p-3 border">
-              <p className="text-sm font-semibold mb-2">2030 Cliff Stress (Year 6 rates: 4/6/8)</p>
-              <div className="grid md:grid-cols-4 gap-2">
-                {rows.map((row) => (
-                  <div key={`${row.dealId}-stress`} className="border rounded-lg p-2">
-                    <p className="font-medium mb-1">{FINAL_FOUR_DEALS.find((d) => d.id === row.dealId)?.name ?? 'Ghost Deal'}</p>
-                    {row.stress2030?.map((s) => (
-                      <p key={s.rate} className="font-mono text-xs whitespace-pre">
-                        {(s.rate * 100).toFixed(0)}%: {formatMoneyMonospace(s.freeCashYear6)}
-                      </p>
-                    ))}
-                  </div>
-                ))}
+          <Card className="shadow-none">
+            <CardHeader>
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">{deal.name}</h2>
+                <p className="text-[11px] text-muted-foreground">{deal.postcode}</p>
               </div>
-            </div>
-          )}
+              <Badge variant={metrics.cliff.variant}>{metrics.cliff.label}</Badge>
+            </CardHeader>
+
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="fin-panel p-2">
+                  <p className="metric-label">DLA ETA</p>
+                  <div className="mt-0.5 flex items-center gap-1.5">
+                    <p className="financial text-sm font-semibold">{metrics.eta.label}</p>
+                    <Badge variant={metrics.eta.variant}>ETA</Badge>
+                  </div>
+                </div>
+                <div className="fin-panel p-2">
+                  <p className="metric-label">2030 Break-even</p>
+                  <p className="financial text-sm font-semibold">{v.breakEven.toFixed(1)}%</p>
+                </div>
+              </div>
+
+              <div>
+                <div className="metric-label mb-1 flex justify-between">
+                  <span>DLA Progress (20Y)</span>
+                  <span className="financial">£{v.repaid20y.toLocaleString()} / £{deal.dlaStart.toLocaleString()}</span>
+                </div>
+                <div className="h-2.5 overflow-hidden rounded bg-muted">
+                  <div className="h-full bg-accent" style={{ width: `${metrics.pct}%` }} />
+                </div>
+              </div>
+
+              <Tabs value={mode} onValueChange={(value) => setMode(value as Mode)}>
+                <TabsList>
+                  <TabsTrigger value="conservative">Conservative (3.0%)</TabsTrigger>
+                  <TabsTrigger value="marketing">Marketing (3.5%)</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </CardContent>
+          </Card>
         </div>
       </main>
     </AuthGate>

@@ -1,26 +1,76 @@
+@config "../tailwind.config.ts";
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #020617;
+  --foreground: #e2e8f0;
+  --panel: #0f172a;
+  --border: #1e293b;
+  --muted: #0b1220;
+  --muted-foreground: #94a3b8;
+  --accent: #3b82f6;
+  --accent-foreground: #eff6ff;
+
+  --cliff-red: #ef4444;
+  --cliff-amber: #f59e0b;
+  --cliff-green: #22c55e;
+
+  --dla-green: #22c55e;
+  --dla-amber: #f59e0b;
+  --dla-red: #ef4444;
+
+  --font-financial: "JetBrains Mono", "IBM Plex Mono";
+
+  --radius: 4px;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-cliff-red: var(--cliff-red);
+  --color-cliff-amber: var(--cliff-amber);
+  --color-cliff-green: var(--cliff-green);
+
+  --color-dla-green: var(--dla-green);
+  --color-dla-amber: var(--dla-amber);
+  --color-dla-red: var(--dla-red);
+
   --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-mono: var(--font-financial), var(--font-geist-mono);
+
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--border);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Inter, "Segoe UI", sans-serif;
+}
+
+.financial,
+[data-financial="true"] {
+  font-family: var(--font-financial), var(--font-geist-mono), "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-label {
+  @apply text-[11px] text-muted-foreground;
+}
+
+.fin-panel {
+  @apply rounded border border-border bg-panel;
 }

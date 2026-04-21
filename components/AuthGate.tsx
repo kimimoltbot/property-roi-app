@@ -40,7 +40,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }, [router])
 
-  if (loading) return <div className="p-6 text-sm text-gray-600">Checking session…</div>
+  if (loading) return <div className="p-6 text-sm text-muted-foreground">Checking session…</div>
   if (!ok) return null
   return <>{children}</>
 }

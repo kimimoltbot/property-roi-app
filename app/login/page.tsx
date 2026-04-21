@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { Card, CardContent } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -11,7 +13,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -24,9 +25,10 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
 
-    const { error } = mode === 'signin'
-      ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/login` } })
+    const { error } =
+      mode === 'signin'
+        ? await supabase.auth.signInWithPassword({ email, password })
+        : await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/login` } })
 
     if (error) {
       setError(error.message)
@@ -44,25 +46,47 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl border border-gray-200 shadow p-6">
-        <h1 className="text-2xl font-bold text-gray-900">Property ROI</h1>
-        <p className="text-sm text-gray-500 mt-1 mb-4">Secure sign in</p>
+    <main className="flex min-h-screen items-center justify-center bg-background p-3">
+      <Card className="w-full max-w-md shadow-none">
+        <CardContent className="p-4">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Property ROI</h1>
+          <p className="mb-3 mt-1 text-xs text-muted-foreground">Secure sign in</p>
 
-        <div className="grid grid-cols-2 bg-gray-100 rounded-lg p-1 mb-4">
-          <button onClick={() => setMode('signin')} className={`rounded-md py-2 text-sm ${mode === 'signin' ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>Sign in</button>
-          <button onClick={() => setMode('signup')} className={`rounded-md py-2 text-sm ${mode === 'signup' ? 'bg-white shadow font-medium' : 'text-gray-500'}`}>Create</button>
-        </div>
+          <Tabs value={mode} onValueChange={(value) => setMode(value as 'signin' | 'signup')}>
+            <TabsList className="mb-3">
+              <TabsTrigger value="signin">Sign in</TabsTrigger>
+              <TabsTrigger value="signup">Create</TabsTrigger>
+            </TabsList>
+          </Tabs>
 
-        <form onSubmit={onSubmit} className="space-y-3">
-          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full border border-gray-300 rounded-lg px-3 py-2" />
-          <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="w-full border border-gray-300 rounded-lg px-3 py-2" />
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg py-2 font-medium">
-            {loading ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
-          </button>
-        </form>
-      </div>
+          <form onSubmit={onSubmit} className="space-y-2">
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email"
+              className="w-full rounded border border-border bg-muted px-3 py-2 text-sm outline-none ring-accent/40 placeholder:text-muted-foreground focus:ring-1"
+            />
+            <input
+              type="password"
+              required
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              className="w-full rounded border border-border bg-muted px-3 py-2 text-sm outline-none ring-accent/40 placeholder:text-muted-foreground focus:ring-1"
+            />
+            {error && <p className="text-xs text-dla-red">{error}</p>}
+            <button
+              disabled={loading}
+              className="w-full rounded border border-accent bg-accent py-2 text-sm font-medium text-accent-foreground hover:brightness-110 disabled:opacity-60"
+            >
+              {loading ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
+            </button>
+          </form>
+        </CardContent>
+      </Card>
     </main>
   )
 }
