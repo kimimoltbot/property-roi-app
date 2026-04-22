@@ -34,6 +34,10 @@ function normalisePostcode(postcode: string) {
   return postcode.trim().toUpperCase().replace(/\s+/g, ' ')
 }
 
+function dealCodeFromPostcode(postcode: string) {
+  return `DRAFT-${postcode.replace(/\s+/g, '-')}`
+}
+
 function miniDealCard(output: MiniOutput | null) {
   if (!output) return null
   const cliff = cliffBadge(output.cliffGauge)
@@ -99,8 +103,19 @@ export default function DashboardPage() {
       if (authError || !authData.user) {
         throw new Error('You must be signed in to save a draft deal.')
       }
-
       const user = authData.user
+
+      const { data: membership, error: membershipError } = await supabase
+        .from('workspace_members')
+        .select('workspace_id')
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (membershipError || !membership?.workspace_id) {
+        throw new Error('Workspace membership not found for this user.')
+      }
+
+      const workspaceId = membership.workspace_id as string
       const cleanPostcode = normalisePostcode(postcode)
       const purchasePriceValue = toCurrency(purchasePrice)
       const monthlyRentValue = toCurrency(monthlyRent)
@@ -113,10 +128,11 @@ export default function DashboardPage() {
         postcode: intel.normalizedPostcode ?? cleanPostcode,
         purchasePrice: purchasePriceValue,
         expectedMonthlyRent: monthlyRentValue,
+        skepticismBufferPct: 10,
         licensingProvision: {
-          y1: intel.licensing?.y1 ?? 1200,
-          y6: intel.licensing?.y6 ?? 1200,
-          y11: intel.licensing?.y11 ?? 1500,
+          y1: intel.licensing?.y1 ?? 750,
+          y6: intel.licensing?.y6 ?? 750,
+          y11: intel.licensing?.y11 ?? 750,
         },
         capturedAt: new Date().toISOString(),
       }
@@ -125,11 +141,11 @@ export default function DashboardPage() {
         id: 'quick-size-up-draft',
         name: `Quick Size-Up ${intel.normalizedPostcode ?? cleanPostcode}`,
         postcode: intel.normalizedPostcode ?? cleanPostcode,
-        dlaStart: purchasePriceValue * 0.32,
+        dlaStart: 111082,
         loanAmount: purchasePriceValue * 0.75,
         annualRent: monthlyRentValue * 12,
         annualCosts: monthlyRentValue * 12 * 0.25,
-        initialRate: 0.05,
+        initialRate: 0.061,
         annualCashflowConservative: monthlyRentValue * 12 * 0.05,
         annualCashflowMarketing: monthlyRentValue * 12 * 0.08,
       }
@@ -141,57 +157,63 @@ export default function DashboardPage() {
         cliffGauge: fiveYear.cliffBadge,
       }
 
-      const { data: existingDraft, error: draftLookupError } = await supabase
-        .from('deals')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('status', 'draft')
-        .eq('postcode', intel.normalizedPostcode ?? cleanPostcode)
-        .maybeSingle()
+      const finalPostcode = intel.normalizedPostcode ?? cleanPostcode
+      const dealCode = dealCodeFromPostcode(finalPostcode)
 
-      if (draftLookupError) {
-        throw new Error(`Unable to check existing draft: ${draftLookupError.message}`)
-      }
-
-      const draftPayload = {
-        user_id: user.id,
+      const dealPayload = {
+        deal_code: dealCode,
+        name: `Quick Size-Up ${finalPostcode}`,
+        market: 'Quick Size-Up',
+        asset_type: 'draft',
         status: 'draft',
-        postcode: intel.normalizedPostcode ?? cleanPostcode,
-        purchase_price: purchasePriceValue,
-        expected_monthly_rent: monthlyRentValue,
-        intel_snapshot: intel,
-        mini_output: mini,
-        updated_at: new Date().toISOString(),
-      }
-
-      let dealId = existingDraft?.id as string | undefined
-
-      if (dealId) {
-        const { error: updateError } = await supabase.from('deals').update(draftPayload).eq('id', dealId).eq('user_id', user.id)
-        if (updateError) throw new Error(`Unable to update draft deal: ${updateError.message}`)
-      } else {
-        const { data: insertedDeal, error: insertError } = await supabase
-          .from('deals')
-          .insert(draftPayload)
-          .select('id')
-          .single()
-        if (insertError) throw new Error(`Unable to create draft deal: ${insertError.message}`)
-        dealId = insertedDeal.id as string
-      }
-
-      const { error: assumptionsError } = await supabase.from('assumptions').upsert(
-        {
-          user_id: user.id,
-          deal_id: dealId,
-          snapshot: assumptionsSnapshot,
-          updated_at: new Date().toISOString(),
+        acquisition_price: purchasePriceValue,
+        expected_rent_pa: monthlyRentValue * 12,
+        capex_budget: 0,
+        holding_period_years: 20,
+        workspace_id: workspaceId,
+        created_by: user.id,
+        updated_by: user.id,
+        metadata: {
+          postcode: finalPostcode,
+          expected_monthly_rent: monthlyRentValue,
+          intel_snapshot: intel,
+          mini_output: mini,
+          source: 'quick-size-up',
         },
-        { onConflict: 'deal_id' },
-      )
+      }
+
+      const { data: upsertedDeal, error: dealError } = await supabase
+        .from('deals')
+        .upsert(dealPayload, { onConflict: 'deal_code' })
+        .select('id')
+        .single()
+
+      if (dealError) throw new Error(`Unable to save draft deal: ${dealError.message}`)
+
+      const { error: assumptionsError } = await supabase
+        .from('assumptions')
+        .upsert(
+          {
+            deal_id: upsertedDeal.id,
+            scenario_label: 'quick-size-up',
+            discount_rate: 0.1,
+            rent_growth_rate: 0.03,
+            expense_growth_rate: 0.02,
+            exit_cap_rate: 0.055,
+            vacancy_rate: 0.05,
+            management_fee_rate: 0.12,
+            tax_rate: 0.19,
+            inflation_rate: 0.02,
+            financing_ltv: 0.75,
+            financing_interest_rate: 0.061,
+            notes: JSON.stringify(assumptionsSnapshot),
+          },
+          { onConflict: 'deal_id,scenario_label' },
+        )
 
       if (assumptionsError) throw new Error(`Unable to persist assumptions snapshot: ${assumptionsError.message}`)
 
-      setSavedDealId(dealId ?? null)
+      setSavedDealId(upsertedDeal.id)
       setMiniOutput(mini)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Unable to run Quick Size-Up.')
