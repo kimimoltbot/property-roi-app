@@ -3,8 +3,6 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Card, CardContent } from '@/components/ui/card'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -46,28 +44,32 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background p-3">
-      <Card className="w-full max-w-md shadow-none">
-        <CardContent className="p-4">
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">Property ROI</h1>
-          <p className="mb-3 mt-1 text-xs text-muted-foreground">Secure sign in</p>
+    <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 16 }}>
+      <div style={{ width: '100%', maxWidth: 360 }}>
+        <h1>Property ROI Login</h1>
 
-          <Tabs value={mode} onValueChange={(value) => setMode(value as 'signin' | 'signup')}>
-            <TabsList className="mb-3">
-              <TabsTrigger value="signin">Sign in</TabsTrigger>
-              <TabsTrigger value="signup">Create</TabsTrigger>
-            </TabsList>
-          </Tabs>
+        <div style={{ marginBottom: 12, marginTop: 8 }}>
+          <button type="button" onClick={() => setMode('signin')} disabled={loading || mode === 'signin'}>
+            Sign in
+          </button>{' '}
+          <button type="button" onClick={() => setMode('signup')} disabled={loading || mode === 'signup'}>
+            Sign up
+          </button>
+        </div>
 
-          <form onSubmit={onSubmit} className="space-y-2">
+        <form onSubmit={onSubmit}>
+          <div style={{ marginBottom: 8 }}>
             <input
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Email"
-              className="w-full rounded border border-border bg-muted px-3 py-2 text-sm outline-none ring-accent/40 placeholder:text-muted-foreground focus:ring-1"
+              style={{ width: '100%' }}
             />
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
             <input
               type="password"
               required
@@ -75,18 +77,17 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
-              className="w-full rounded border border-border bg-muted px-3 py-2 text-sm outline-none ring-accent/40 placeholder:text-muted-foreground focus:ring-1"
+              style={{ width: '100%' }}
             />
-            {error && <p className="text-xs text-dla-red">{error}</p>}
-            <button
-              disabled={loading}
-              className="w-full rounded border border-accent bg-accent py-2 text-sm font-medium text-accent-foreground hover:brightness-110 disabled:opacity-60"
-            >
-              {loading ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
-            </button>
-          </form>
-        </CardContent>
-      </Card>
+          </div>
+
+          {error ? <p>{error}</p> : null}
+
+          <button type="submit" disabled={loading}>
+            {loading ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
+          </button>
+        </form>
+      </div>
     </main>
   )
 }
