@@ -21,6 +21,13 @@ type MiniOutput = {
   cliffGauge: 'safe' | 'watch' | 'alert'
 }
 
+type RunStatus = {
+  intelFetched: boolean
+  draftSaved: boolean
+  roiComputed: boolean
+  lastRunAt: string | null
+}
+
 type AdvancedInputs = {
   reservationFee: string
   solicitorFee: string
@@ -35,8 +42,8 @@ type AdvancedInputs = {
 }
 
 const DEFAULT_ADVANCED: AdvancedInputs = {
-  reservationFee: '5000',
-  solicitorFee: '1500',
+  reservationFee: '5,000',
+  solicitorFee: '1,500',
   legalDisbursements: '400',
   brokerFees: '995',
   stampDuty: '0',
@@ -47,9 +54,33 @@ const DEFAULT_ADVANCED: AdvancedInputs = {
   monthlyManagement: '0',
 }
 
-function toCurrency(value: string) {
-  const parsed = Number((value ?? '').replace(/,/g, '').trim())
-  return Number.isFinite(parsed) ? parsed : 0
+const EMPTY_RUN_STATUS: RunStatus = {
+  intelFetched: false,
+  draftSaved: false,
+  roiComputed: false,
+  lastRunAt: null,
+}
+
+const UK_POSTCODE_PATTERN = /^([A-Z]{1,2}\d[A-Z\d]?)(\d[A-Z]{2})$/
+
+function parseCurrency(value: string) {
+  const sanitised = (value ?? '').replace(/£|,/g, '').trim()
+  if (!sanitised) return 0
+  const parsed = Number(sanitised)
+  return Number.isFinite(parsed) ? parsed : NaN
+}
+
+function formatCurrencyInput(value: string) {
+  const parsed = parseCurrency(value)
+  if (!Number.isFinite(parsed)) return value
+  return new Intl.NumberFormat('en-GB', {
+    minimumFractionDigits: Number.isInteger(parsed) ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(parsed)
+}
+
+function moneyInputClass(isInvalid = false) {
+  return `financial w-full rounded border ${isInvalid ? 'border-dla-red/80' : 'border-border'} bg-muted px-2 py-1.5 text-xs text-foreground outline-none ring-accent/40 placeholder:text-muted-foreground focus:ring-1`
 }
 
 function cliffBadge(gauge: MiniOutput['cliffGauge']) {
@@ -59,37 +90,62 @@ function cliffBadge(gauge: MiniOutput['cliffGauge']) {
 }
 
 function normalisePostcode(postcode: string) {
-  return postcode.trim().toUpperCase().replace(/\s+/g, ' ')
+  const compact = postcode.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  if (!compact) return ''
+
+  const match = compact.match(UK_POSTCODE_PATTERN)
+  if (!match) {
+    if (compact.length > 3) return `${compact.slice(0, compact.length - 3)} ${compact.slice(-3)}`
+    return compact
+  }
+
+  return `${match[1]} ${match[2]}`
+}
+
+function isValidUkPostcode(postcode: string) {
+  return UK_POSTCODE_PATTERN.test(postcode.replace(/\s+/g, ''))
 }
 
 function dealCodeFromPostcode(postcode: string) {
   return `DRAFT-${postcode.replace(/\s+/g, '-')}`
 }
 
-function moneyInputClass() {
-  return 'financial w-full rounded border border-border bg-muted px-2 py-1.5 text-xs text-foreground outline-none ring-accent/40 placeholder:text-muted-foreground focus:ring-1'
+function statusPill(done: boolean, label: string) {
+  return (
+    <span className={`rounded border px-2 py-1 text-[10px] ${done ? 'border-emerald-700/70 bg-emerald-900/30 text-emerald-300' : 'border-border bg-panel text-muted-foreground'}`}>
+      {done ? '✓' : '•'} {label}
+    </span>
+  )
 }
 
 export default function DashboardPage() {
   const [postcode, setPostcode] = useState('')
   const [purchasePrice, setPurchasePrice] = useState('')
   const [monthlyRent, setMonthlyRent] = useState('')
+  const [source, setSource] = useState('Manual entry')
+  const [listingUrl, setListingUrl] = useState('')
+  const [notes, setNotes] = useState('')
   const [advanced, setAdvanced] = useState<AdvancedInputs>(DEFAULT_ADVANCED)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [savedDealId, setSavedDealId] = useState<string | null>(null)
   const [miniOutput, setMiniOutput] = useState<MiniOutput | null>(null)
+  const [runStatus, setRunStatus] = useState<RunStatus>(EMPTY_RUN_STATUS)
 
-  const purchasePriceValue = toCurrency(purchasePrice)
-  const monthlyRentValue = toCurrency(monthlyRent)
+  const cleanPostcode = normalisePostcode(postcode)
+  const purchasePriceValue = parseCurrency(purchasePrice)
+  const monthlyRentValue = parseCurrency(monthlyRent)
+  const postcodeInvalid = postcode.trim().length > 0 && !isValidUkPostcode(cleanPostcode)
+  const purchasePriceInvalid = purchasePrice.trim().length > 0 && (!Number.isFinite(purchasePriceValue) || purchasePriceValue <= 0)
+  const monthlyRentInvalid = monthlyRent.trim().length > 0 && (!Number.isFinite(monthlyRentValue) || monthlyRentValue <= 0)
 
   const finance = useMemo(() => {
-    const reservationFee = toCurrency(advanced.reservationFee)
-    const solicitorFee = toCurrency(advanced.solicitorFee)
-    const legalDisbursements = toCurrency(advanced.legalDisbursements)
-    const brokerFees = toCurrency(advanced.brokerFees)
-    const stampDuty = toCurrency(advanced.stampDuty)
-    const furniturePack = toCurrency(advanced.furniturePack)
+    const reservationFee = parseCurrency(advanced.reservationFee)
+    const solicitorFee = parseCurrency(advanced.solicitorFee)
+    const legalDisbursements = parseCurrency(advanced.legalDisbursements)
+    const brokerFees = parseCurrency(advanced.brokerFees)
+    const stampDuty = parseCurrency(advanced.stampDuty)
+    const furniturePack = parseCurrency(advanced.furniturePack)
 
     const mortgageAmount = purchasePriceValue * 0.75
     const exchangeDepositGross = purchasePriceValue * 0.1
@@ -100,10 +156,10 @@ export default function DashboardPage() {
     const completionTotal = completionDepositRemaining + brokerFees + stampDuty + furniturePack
     const totalRequiredToComplete = exchangeCombinedTotal + completionTotal
 
-    const mortgage = toCurrency(advanced.monthlyMortgage)
-    const estateServiceCharges = toCurrency(advanced.monthlyEstateServiceCharges)
-    const groundRent = toCurrency(advanced.monthlyGroundRent)
-    const management = toCurrency(advanced.monthlyManagement)
+    const mortgage = parseCurrency(advanced.monthlyMortgage)
+    const estateServiceCharges = parseCurrency(advanced.monthlyEstateServiceCharges)
+    const groundRent = parseCurrency(advanced.monthlyGroundRent)
+    const management = parseCurrency(advanced.monthlyManagement)
     const estimatedRent = monthlyRentValue
 
     const totalMonthly = mortgage + estateServiceCharges + groundRent + management
@@ -136,8 +192,8 @@ export default function DashboardPage() {
   }, [advanced, purchasePriceValue, monthlyRentValue])
 
   const canSubmit = useMemo(() => {
-    return postcode.trim().length > 0 && purchasePriceValue > 0 && monthlyRentValue > 0
-  }, [postcode, purchasePriceValue, monthlyRentValue])
+    return !postcodeInvalid && !purchasePriceInvalid && !monthlyRentInvalid && cleanPostcode.length > 0
+  }, [postcodeInvalid, purchasePriceInvalid, monthlyRentInvalid, cleanPostcode])
 
   const matrixRows = useMemo(() => {
     if (!canSubmit) return []
@@ -145,7 +201,7 @@ export default function DashboardPage() {
     const baseDeal: DealInput = {
       id: 'quick-size-up-draft',
       name: 'Quick Size-Up',
-      postcode: normalisePostcode(postcode),
+      postcode: cleanPostcode,
       dlaStart: 111082,
       loanAmount: purchasePriceValue * 0.75,
       annualRent: monthlyRentValue * 12,
@@ -160,12 +216,33 @@ export default function DashboardPage() {
       { label: 'Conservative · 20Y', result: runComparativeEngine(baseDeal, 20, 'conservative') },
       { label: 'Marketing · 20Y', result: runComparativeEngine(baseDeal, 20, 'marketing') },
     ]
-  }, [canSubmit, postcode, purchasePriceValue, monthlyRentValue, finance.totalYearly])
+  }, [canSubmit, cleanPostcode, purchasePriceValue, monthlyRentValue, finance.totalYearly])
+
+  const advancedSummary = useMemo(() => {
+    const entries = ([
+      ['Reservation', finance.reservationFee],
+      ['Solicitor', finance.solicitorFee],
+      ['Broker', finance.brokerFees],
+      ['Stamp duty', finance.stampDuty],
+      ['Mortgage pcm', finance.mortgage],
+      ['Management pcm', finance.management],
+      ['Ground rent pcm', finance.groundRent],
+      ['Estate charges pcm', finance.estateServiceCharges],
+    ] as Array<[string, number]>).filter(([, value]) => value > 0)
+
+    if (entries.length === 0) return 'Advanced · Using baseline assumptions'
+
+    const shown = entries.slice(0, 3).map(([label, value]) => `${label} ${formatMoneyMonospace(value)}`)
+    const remainder = entries.length > 3 ? ` +${entries.length - 3} more` : ''
+
+    return `Advanced · ${shown.join(' · ')}${remainder}`
+  }, [finance])
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     setError('')
     setSubmitting(true)
+    setRunStatus({ ...EMPTY_RUN_STATUS, lastRunAt: new Date().toISOString() })
 
     try {
       const { data: authData, error: authError } = await supabase.auth.getUser()
@@ -189,16 +266,19 @@ export default function DashboardPage() {
       if (!workspaceId) {
         throw new Error('Workspace membership not found for this user. Please run workspace backfill SQL and sign in again.')
       }
-      const cleanPostcode = normalisePostcode(postcode)
 
       const intelResponse = await fetch(`/api/intel?postcode=${encodeURIComponent(cleanPostcode)}`)
       if (!intelResponse.ok) throw new Error('Unable to fetch postcode intelligence.')
       const intel = (await intelResponse.json()) as IntelResponse
+      setRunStatus((v) => ({ ...v, intelFetched: true }))
 
       const assumptionsSnapshot = {
         postcode: intel.normalizedPostcode ?? cleanPostcode,
         purchasePrice: purchasePriceValue,
         expectedMonthlyRent: monthlyRentValue,
+        source,
+        listingUrl,
+        notes,
         skepticismBufferPct: 10,
         licensingProvision: {
           y1: intel.licensing?.y1 ?? 750,
@@ -238,27 +318,7 @@ export default function DashboardPage() {
         capturedAt: new Date().toISOString(),
       }
 
-      const dealInput: DealInput = {
-        id: 'quick-size-up-draft',
-        name: `Quick Size-Up ${intel.normalizedPostcode ?? cleanPostcode}`,
-        postcode: intel.normalizedPostcode ?? cleanPostcode,
-        dlaStart: 111082,
-        loanAmount: purchasePriceValue * 0.75,
-        annualRent: monthlyRentValue * 12,
-        annualCosts: finance.totalYearly,
-        initialRate: 0.061,
-        annualCashflowConservative: monthlyRentValue * 12 * 0.05,
-        annualCashflowMarketing: monthlyRentValue * 12 * 0.08,
-      }
-
-      const fiveYear = runComparativeEngine(dealInput, 5, 'conservative')
-      const mini: MiniOutput = {
-        breakEvenMortgageRatePct: fiveYear.breakEvenYear6Pct,
-        fiveYearDlaContribution: fiveYear.repaidByHorizon,
-        cliffGauge: fiveYear.cliffBadge,
-      }
-
-      const finalPostcode = intel.normalizedPostcode ?? cleanPostcode
+      const finalPostcode = normalisePostcode(intel.normalizedPostcode ?? cleanPostcode)
       const dealCode = dealCodeFromPostcode(finalPostcode)
 
       const dealPayload = {
@@ -277,10 +337,11 @@ export default function DashboardPage() {
         metadata: {
           postcode: finalPostcode,
           expected_monthly_rent: monthlyRentValue,
+          source,
+          listing_url: listingUrl,
+          notes,
           intel_snapshot: intel,
-          mini_output: mini,
           cashflow_snapshot: assumptionsSnapshot.advancedCashflow,
-          source: 'quick-size-up',
         },
       }
 
@@ -291,6 +352,27 @@ export default function DashboardPage() {
         .single()
 
       if (dealError) throw new Error(`Unable to save draft deal: ${dealError.message}`)
+      setRunStatus((v) => ({ ...v, draftSaved: true }))
+
+      const dealInput: DealInput = {
+        id: 'quick-size-up-draft',
+        name: `Quick Size-Up ${finalPostcode}`,
+        postcode: finalPostcode,
+        dlaStart: 111082,
+        loanAmount: purchasePriceValue * 0.75,
+        annualRent: monthlyRentValue * 12,
+        annualCosts: finance.totalYearly,
+        initialRate: 0.061,
+        annualCashflowConservative: monthlyRentValue * 12 * 0.05,
+        annualCashflowMarketing: monthlyRentValue * 12 * 0.08,
+      }
+
+      const fiveYear = runComparativeEngine(dealInput, 5, 'conservative')
+      const mini: MiniOutput = {
+        breakEvenMortgageRatePct: fiveYear.breakEvenYear6Pct,
+        fiveYearDlaContribution: fiveYear.repaidByHorizon,
+        cliffGauge: fiveYear.cliffBadge,
+      }
 
       const { error: assumptionsError } = await supabase
         .from('assumptions')
@@ -308,7 +390,7 @@ export default function DashboardPage() {
             inflation_rate: 0.02,
             financing_ltv: 0.75,
             financing_interest_rate: 0.061,
-            notes: JSON.stringify(assumptionsSnapshot),
+            notes: JSON.stringify({ ...assumptionsSnapshot, miniOutput: mini }),
           },
           { onConflict: 'deal_id,scenario_label' },
         )
@@ -317,6 +399,8 @@ export default function DashboardPage() {
 
       setSavedDealId(upsertedDeal.id)
       setMiniOutput(mini)
+      setRunStatus((v) => ({ ...v, roiComputed: true }))
+      setPostcode(finalPostcode)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Unable to run Quick Size-Up.')
     } finally {
@@ -341,6 +425,17 @@ export default function DashboardPage() {
             </button>
           </div>
 
+          <div className="rounded border border-border bg-panel/50 p-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {statusPill(runStatus.intelFetched, 'Intel fetched')}
+              {statusPill(runStatus.draftSaved, 'Draft saved')}
+              {statusPill(runStatus.roiComputed, 'ROI computed')}
+              <span className="ml-auto text-[10px] text-muted-foreground">
+                Last run: {runStatus.lastRunAt ? new Date(runStatus.lastRunAt).toLocaleString('en-GB') : 'Not run yet'}
+              </span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 gap-2 xl:grid-cols-[540px_minmax(0,1fr)]">
             <Card className="shadow-none">
               <CardHeader>
@@ -358,10 +453,12 @@ export default function DashboardPage() {
                       <input
                         required
                         value={postcode}
-                        onChange={(event) => setPostcode(event.target.value)}
+                        onChange={(event) => setPostcode(event.target.value.toUpperCase())}
+                        onBlur={() => setPostcode((v) => normalisePostcode(v))}
                         placeholder="e.g. SW1A 1AA"
-                        className="w-full rounded border border-border bg-muted px-2 py-1.5 text-xs text-foreground outline-none ring-accent/40 placeholder:text-muted-foreground focus:ring-1"
+                        className={moneyInputClass(postcodeInvalid)}
                       />
+                      {postcodeInvalid ? <span className="text-[10px] text-dla-red">Use a valid UK postcode format.</span> : null}
                     </label>
 
                     <label className="space-y-1 text-[11px] text-muted-foreground">
@@ -371,9 +468,11 @@ export default function DashboardPage() {
                         inputMode="decimal"
                         value={purchasePrice}
                         onChange={(event) => setPurchasePrice(event.target.value)}
-                        placeholder="e.g. 225000"
-                        className={moneyInputClass()}
+                        onBlur={() => setPurchasePrice((v) => formatCurrencyInput(v))}
+                        placeholder="e.g. 225,000"
+                        className={moneyInputClass(purchasePriceInvalid)}
                       />
+                      {purchasePriceInvalid ? <span className="text-[10px] text-dla-red">Enter a valid amount above £0.</span> : null}
                     </label>
 
                     <label className="space-y-1 text-[11px] text-muted-foreground">
@@ -383,21 +482,57 @@ export default function DashboardPage() {
                         inputMode="decimal"
                         value={monthlyRent}
                         onChange={(event) => setMonthlyRent(event.target.value)}
-                        placeholder="e.g. 1450"
+                        onBlur={() => setMonthlyRent((v) => formatCurrencyInput(v))}
+                        placeholder="e.g. 1,450"
+                        className={moneyInputClass(monthlyRentInvalid)}
+                      />
+                      {monthlyRentInvalid ? <span className="text-[10px] text-dla-red">Enter a valid amount above £0.</span> : null}
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <label className="space-y-1 text-[11px] text-muted-foreground">
+                      <span>Source</span>
+                      <input
+                        value={source}
+                        onChange={(event) => setSource(event.target.value)}
+                        placeholder="e.g. Rightmove, Zoopla, agent email"
+                        className={moneyInputClass()}
+                      />
+                    </label>
+
+                    <label className="space-y-1 text-[11px] text-muted-foreground md:col-span-2">
+                      <span>Listing URL</span>
+                      <input
+                        type="url"
+                        value={listingUrl}
+                        onChange={(event) => setListingUrl(event.target.value)}
+                        placeholder="https://"
                         className={moneyInputClass()}
                       />
                     </label>
                   </div>
 
+                  <label className="space-y-1 text-[11px] text-muted-foreground">
+                    <span>Notes</span>
+                    <textarea
+                      rows={2}
+                      value={notes}
+                      onChange={(event) => setNotes(event.target.value)}
+                      placeholder="Any context, caveats, or call notes"
+                      className="w-full rounded border border-border bg-muted px-2 py-1.5 text-xs text-foreground outline-none ring-accent/40 placeholder:text-muted-foreground focus:ring-1"
+                    />
+                  </label>
+
                   <details className="rounded border border-border bg-panel/30 p-2">
-                    <summary className="cursor-pointer text-xs font-medium text-foreground">Advanced</summary>
+                    <summary className="cursor-pointer text-xs font-medium text-foreground">{advancedSummary}</summary>
                     <div className="mt-2 space-y-2">
                       <div>
                         <p className="mb-1 text-[11px] font-medium text-muted-foreground">On exchange</p>
                         <div className="grid grid-cols-2 gap-2">
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Reservation fee (£)</span><input value={advanced.reservationFee} onChange={(e) => setAdvanced((v) => ({ ...v, reservationFee: e.target.value }))} className={moneyInputClass()} /></label>
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Solicitor (£)</span><input value={advanced.solicitorFee} onChange={(e) => setAdvanced((v) => ({ ...v, solicitorFee: e.target.value }))} className={moneyInputClass()} /></label>
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Legal disbursements (£)</span><input value={advanced.legalDisbursements} onChange={(e) => setAdvanced((v) => ({ ...v, legalDisbursements: e.target.value }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Reservation fee (£)</span><input value={advanced.reservationFee} onChange={(e) => setAdvanced((v) => ({ ...v, reservationFee: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, reservationFee: formatCurrencyInput(v.reservationFee) }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Solicitor (£)</span><input value={advanced.solicitorFee} onChange={(e) => setAdvanced((v) => ({ ...v, solicitorFee: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, solicitorFee: formatCurrencyInput(v.solicitorFee) }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Legal disbursements (£)</span><input value={advanced.legalDisbursements} onChange={(e) => setAdvanced((v) => ({ ...v, legalDisbursements: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, legalDisbursements: formatCurrencyInput(v.legalDisbursements) }))} className={moneyInputClass()} /></label>
                           <div className="fin-panel p-2 text-[11px]"><p className="metric-label">Combined total</p><p className="financial text-xs">{formatMoneyMonospace(finance.exchangeCombinedTotal)}</p></div>
                         </div>
                         <div className="mt-1 fin-panel p-2 text-[11px]"><p className="metric-label">10% deposit less reservation</p><p className="financial text-xs">{formatMoneyMonospace(finance.exchangeDepositNet)}</p></div>
@@ -406,9 +541,9 @@ export default function DashboardPage() {
                       <div>
                         <p className="mb-1 text-[11px] font-medium text-muted-foreground">On completion</p>
                         <div className="grid grid-cols-2 gap-2">
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Broker fees (£)</span><input value={advanced.brokerFees} onChange={(e) => setAdvanced((v) => ({ ...v, brokerFees: e.target.value }))} className={moneyInputClass()} /></label>
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Stamp duty (£)</span><input value={advanced.stampDuty} onChange={(e) => setAdvanced((v) => ({ ...v, stampDuty: e.target.value }))} className={moneyInputClass()} /></label>
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Furniture pack (£)</span><input value={advanced.furniturePack} onChange={(e) => setAdvanced((v) => ({ ...v, furniturePack: e.target.value }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Broker fees (£)</span><input value={advanced.brokerFees} onChange={(e) => setAdvanced((v) => ({ ...v, brokerFees: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, brokerFees: formatCurrencyInput(v.brokerFees) }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Stamp duty (£)</span><input value={advanced.stampDuty} onChange={(e) => setAdvanced((v) => ({ ...v, stampDuty: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, stampDuty: formatCurrencyInput(v.stampDuty) }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Furniture pack (£)</span><input value={advanced.furniturePack} onChange={(e) => setAdvanced((v) => ({ ...v, furniturePack: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, furniturePack: formatCurrencyInput(v.furniturePack) }))} className={moneyInputClass()} /></label>
                           <div className="fin-panel p-2 text-[11px]"><p className="metric-label">Completion total</p><p className="financial text-xs">{formatMoneyMonospace(finance.completionTotal)}</p></div>
                         </div>
                         <div className="mt-1 grid grid-cols-3 gap-2 text-[11px]">
@@ -421,10 +556,10 @@ export default function DashboardPage() {
                       <div>
                         <p className="mb-1 text-[11px] font-medium text-muted-foreground">Cash flow monthly breakdown</p>
                         <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Mortgage (£)</span><input value={advanced.monthlyMortgage} onChange={(e) => setAdvanced((v) => ({ ...v, monthlyMortgage: e.target.value }))} className={moneyInputClass()} /></label>
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Estate service charges (£)</span><input value={advanced.monthlyEstateServiceCharges} onChange={(e) => setAdvanced((v) => ({ ...v, monthlyEstateServiceCharges: e.target.value }))} className={moneyInputClass()} /></label>
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Ground rent (£)</span><input value={advanced.monthlyGroundRent} onChange={(e) => setAdvanced((v) => ({ ...v, monthlyGroundRent: e.target.value }))} className={moneyInputClass()} /></label>
-                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Management (£)</span><input value={advanced.monthlyManagement} onChange={(e) => setAdvanced((v) => ({ ...v, monthlyManagement: e.target.value }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Mortgage (£)</span><input value={advanced.monthlyMortgage} onChange={(e) => setAdvanced((v) => ({ ...v, monthlyMortgage: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, monthlyMortgage: formatCurrencyInput(v.monthlyMortgage) }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Estate service charges (£)</span><input value={advanced.monthlyEstateServiceCharges} onChange={(e) => setAdvanced((v) => ({ ...v, monthlyEstateServiceCharges: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, monthlyEstateServiceCharges: formatCurrencyInput(v.monthlyEstateServiceCharges) }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Ground rent (£)</span><input value={advanced.monthlyGroundRent} onChange={(e) => setAdvanced((v) => ({ ...v, monthlyGroundRent: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, monthlyGroundRent: formatCurrencyInput(v.monthlyGroundRent) }))} className={moneyInputClass()} /></label>
+                          <label className="space-y-1 text-[11px] text-muted-foreground"><span>Management (£)</span><input value={advanced.monthlyManagement} onChange={(e) => setAdvanced((v) => ({ ...v, monthlyManagement: e.target.value }))} onBlur={() => setAdvanced((v) => ({ ...v, monthlyManagement: formatCurrencyInput(v.monthlyManagement) }))} className={moneyInputClass()} /></label>
                           <div className="fin-panel p-2"><p className="metric-label">Estimated rent (monthly)</p><p className="financial text-xs">{formatMoneyMonospace(finance.estimatedRent)}</p></div>
                           <div className="fin-panel p-2"><p className="metric-label">Total monthly / yearly</p><p className="financial text-xs">{formatMoneyMonospace(finance.totalMonthly)} / {formatMoneyMonospace(finance.totalYearly)}</p></div>
                         </div>
