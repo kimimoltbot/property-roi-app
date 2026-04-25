@@ -174,17 +174,21 @@ export default function DashboardPage() {
       }
       const user = authData.user
 
-      const { data: membership, error: membershipError } = await supabase
+      const { data: memberships, error: membershipError } = await supabase
         .from('workspace_members')
-        .select('workspace_id')
+        .select('workspace_id, created_at')
         .eq('user_id', user.id)
-        .maybeSingle()
+        .order('created_at', { ascending: true })
+        .limit(1)
 
-      if (membershipError || !membership?.workspace_id) {
-        throw new Error('Workspace membership not found for this user.')
+      if (membershipError) {
+        throw new Error(`Unable to load workspace membership: ${membershipError.message}`)
       }
 
-      const workspaceId = membership.workspace_id as string
+      const workspaceId = memberships?.[0]?.workspace_id as string | undefined
+      if (!workspaceId) {
+        throw new Error('Workspace membership not found for this user. Please run workspace backfill SQL and sign in again.')
+      }
       const cleanPostcode = normalisePostcode(postcode)
 
       const intelResponse = await fetch(`/api/intel?postcode=${encodeURIComponent(cleanPostcode)}`)
