@@ -806,7 +806,7 @@ export default function DashboardPage() {
                     <TableBody>
                       {matrixRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center text-muted-foreground">Enter postcode, price, and rent to populate matrix.</TableCell>
+                          <TableCell colSpan={9} className="text-center text-muted-foreground">Enter postcode, price, and rent to populate matrix.</TableCell>
                         </TableRow>
                       ) : (
                         matrixRows.map((row) => (
@@ -817,6 +817,8 @@ export default function DashboardPage() {
                             <TableCell className="financial">{formatMoneyMonospace(row.result.dlaRemaining)}</TableCell>
                             <TableCell className="financial">{row.result.etaYear ? `Year ${row.result.etaYear}` : 'Not cleared'}</TableCell>
                             <TableCell className="financial">{formatMoneyMonospace(row.result.dividendOrSalaryByHorizon)}</TableCell>
+                            <TableCell className="financial">{`${formatPctMonospace(row.result.kpis.netCoCYear1Pct)} / ${formatPctMonospace(row.result.kpis.netCoCHorizonPct)}`}</TableCell>
+                            <TableCell className="financial">{row.result.kpis.paybackPeriodYears ? `${row.result.kpis.paybackPeriodYears}y` : 'n/a'}</TableCell>
                             <TableCell>
                               <Badge variant={cliffBadge(row.result.cliffBadge).variant}>{cliffBadge(row.result.cliffBadge).label.replace('2030 Cliff: ', '')}</Badge>
                             </TableCell>
@@ -825,6 +827,16 @@ export default function DashboardPage() {
                       )}
                     </TableBody>
                   </Table>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 xl:grid-cols-3 text-[11px]">
+                  {matrixRows.map((row) => (
+                    <div key={`${row.label}-kpis`} className="fin-panel p-2">
+                      <p className="metric-label mb-1">{row.label} · Return on capital</p>
+                      <p className="financial text-xs">RoIC 5/10/20: {formatPctMonospace(row.result.kpis.returnOnInvestedCash5Pct)} · {formatPctMonospace(row.result.kpis.returnOnInvestedCash10Pct)} · {formatPctMonospace(row.result.kpis.returnOnInvestedCash20Pct)}</p>
+                      <p className="financial text-xs">DLA-adjusted return: {formatPctMonospace(row.result.kpis.dlaAdjustedReturnPct)}</p>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-[11px]">

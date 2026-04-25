@@ -2,6 +2,8 @@ export type Mode = 'conservative' | 'marketing'
 
 export type Horizon = 5 | 10 | 15 | 20
 
+export type MortgageType = 'interest-only' | 'repayment'
+
 export interface DealInput {
   id: string
   name: string
@@ -10,23 +12,40 @@ export interface DealInput {
   loanAmount: number
   annualRent: number
   annualCosts: number
-  initialRate: number
+  initialRate?: number
+  initialMortgageRate?: number
+  fixedTermYears?: number
+  mortgageType?: MortgageType
+  postFixRateAssumption?: number
   annualCashflowConservative: number
   annualCashflowMarketing: number
+  investedCash?: number
 }
 
 export interface YearPoint {
   year: number
   rate: number
+  debtService: number
   freeCash: number
   dlaRemaining: number
   distributed: number
+  loanBalance: number
 }
 
 export interface StressPoint {
   rate: number
   freeCashYear6: number
   passes: boolean
+}
+
+export interface ReturnKpis {
+  netCoCYear1Pct: number
+  netCoCHorizonPct: number
+  returnOnInvestedCash5Pct: number
+  returnOnInvestedCash10Pct: number
+  returnOnInvestedCash20Pct: number
+  paybackPeriodYears: number | null
+  dlaAdjustedReturnPct: number
 }
 
 export interface ComparativeResult {
@@ -42,6 +61,7 @@ export interface ComparativeResult {
   stress2030?: StressPoint[]
   cliffBadge: 'safe' | 'watch' | 'alert'
   dividendOrSalaryByHorizon: number
+  kpis: ReturnKpis
   timeline: YearPoint[]
 }
 
