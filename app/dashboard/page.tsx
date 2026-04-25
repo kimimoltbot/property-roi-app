@@ -8,11 +8,26 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { supabase } from '@/lib/supabase'
 import { runComparativeEngine } from '@/lib/roi/engine'
 import { formatMoneyMonospace, formatPctMonospace } from '@/lib/roi/selectors'
-import type { DealInput } from '@/lib/roi/types'
+import type { DealInput, MortgageType } from '@/lib/roi/types'
 
 type IntelResponse = {
   normalizedPostcode?: string
   licensing?: { y1?: number; y6?: number; y11?: number }
+}
+
+type ListingExtractResponse = {
+  url: string
+  source: 'rightmove' | 'zoopla' | 'propertyhub' | 'unknown'
+  extractedAt: string
+  fields: {
+    title: { value: string | null; confidence: 'high' | 'medium' | 'low'; method: string }
+    postcode: { value: string | null; confidence: 'high' | 'medium' | 'low'; method: string }
+    purchasePrice: { value: number | null; confidence: 'high' | 'medium' | 'low'; method: string }
+    monthlyRent: { value: number | null; confidence: 'high' | 'medium' | 'low'; method: string }
+  }
+  warnings: string[]
+  overallConfidence: 'high' | 'medium' | 'low'
+  rawSignals: Record<string, unknown>
 }
 
 type MiniOutput = {
@@ -41,6 +56,13 @@ type AdvancedInputs = {
   monthlyManagement: string
 }
 
+type MortgageInputs = {
+  initialMortgageRatePct: string
+  fixedTermYears: string
+  mortgageType: MortgageType
+  postFixRatePct: string
+}
+
 const DEFAULT_ADVANCED: AdvancedInputs = {
   reservationFee: '5,000',
   solicitorFee: '1,500',
@@ -61,6 +83,13 @@ const EMPTY_RUN_STATUS: RunStatus = {
   lastRunAt: null,
 }
 
+const DEFAULT_MORTGAGE: MortgageInputs = {
+  initialMortgageRatePct: '6.10',
+  fixedTermYears: '5',
+  mortgageType: 'interest-only',
+  postFixRatePct: '7.00',
+}
+
 const UK_POSTCODE_PATTERN = /^([A-Z]{1,2}\d[A-Z\d]?)(\d[A-Z]{2})$/
 
 function parseCurrency(value: string) {
@@ -79,6 +108,19 @@ function formatCurrencyInput(value: string) {
   }).format(parsed)
 }
 
+function parsePercent(value: string) {
+  const sanitised = (value ?? '').replace(/%/g, '').trim()
+  if (!sanitised) return 0
+  const parsed = Number(sanitised)
+  return Number.isFinite(parsed) ? parsed / 100 : NaN
+}
+
+function formatPercentInput(value: string) {
+  const parsed = parsePercent(value)
+  if (!Number.isFinite(parsed)) return value
+  return (parsed * 100).toFixed(2)
+}
+
 function moneyInputClass(isInvalid = false) {
   return `financial w-full rounded border ${isInvalid ? 'border-dla-red/80' : 'border-border'} bg-muted px-2 py-1.5 text-xs text-foreground outline-none ring-accent/40 placeholder:text-muted-foreground focus:ring-1`
 }
@@ -87,6 +129,12 @@ function cliffBadge(gauge: MiniOutput['cliffGauge']) {
   if (gauge === 'safe') return { label: '2030 Cliff: Safe', variant: 'cliffGreen' as const }
   if (gauge === 'watch') return { label: '2030 Cliff: Watch', variant: 'cliffAmber' as const }
   return { label: '2030 Cliff: Alert', variant: 'cliffRed' as const }
+}
+
+function confidenceBadge(confidence: 'high' | 'medium' | 'low') {
+  if (confidence === 'high') return { label: 'High confidence', variant: 'dlaGreen' as const }
+  if (confidence === 'medium') return { label: 'Medium confidence', variant: 'dlaAmber' as const }
+  return { label: 'Low confidence', variant: 'dlaRed' as const }
 }
 
 function normalisePostcode(postcode: string) {
@@ -125,7 +173,11 @@ export default function DashboardPage() {
   const [source, setSource] = useState('Manual entry')
   const [listingUrl, setListingUrl] = useState('')
   const [notes, setNotes] = useState('')
+  const [urlExtract, setUrlExtract] = useState<ListingExtractResponse | null>(null)
+  const [extractingUrl, setExtractingUrl] = useState(false)
+  const [urlExtractError, setUrlExtractError] = useState('')
   const [advanced, setAdvanced] = useState<AdvancedInputs>(DEFAULT_ADVANCED)
+  const [mortgage, setMortgage] = useState<MortgageInputs>(DEFAULT_MORTGAGE)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [savedDealId, setSavedDealId] = useState<string | null>(null)
@@ -138,6 +190,12 @@ export default function DashboardPage() {
   const postcodeInvalid = postcode.trim().length > 0 && !isValidUkPostcode(cleanPostcode)
   const purchasePriceInvalid = purchasePrice.trim().length > 0 && (!Number.isFinite(purchasePriceValue) || purchasePriceValue <= 0)
   const monthlyRentInvalid = monthlyRent.trim().length > 0 && (!Number.isFinite(monthlyRentValue) || monthlyRentValue <= 0)
+  const initialMortgageRate = parsePercent(mortgage.initialMortgageRatePct)
+  const postFixRateAssumption = parsePercent(mortgage.postFixRatePct)
+  const fixedTermYears = Number(mortgage.fixedTermYears)
+  const mortgageRateInvalid = mortgage.initialMortgageRatePct.trim().length > 0 && (!Number.isFinite(initialMortgageRate) || initialMortgageRate < 0)
+  const postFixRateInvalid = mortgage.postFixRatePct.trim().length > 0 && (!Number.isFinite(postFixRateAssumption) || postFixRateAssumption < 0)
+  const fixedTermYearsInvalid = mortgage.fixedTermYears.trim().length > 0 && (!Number.isFinite(fixedTermYears) || fixedTermYears < 1 || fixedTermYears > 40)
 
   const finance = useMemo(() => {
     const reservationFee = parseCurrency(advanced.reservationFee)
@@ -192,8 +250,8 @@ export default function DashboardPage() {
   }, [advanced, purchasePriceValue, monthlyRentValue])
 
   const canSubmit = useMemo(() => {
-    return !postcodeInvalid && !purchasePriceInvalid && !monthlyRentInvalid && cleanPostcode.length > 0
-  }, [postcodeInvalid, purchasePriceInvalid, monthlyRentInvalid, cleanPostcode])
+    return !postcodeInvalid && !purchasePriceInvalid && !monthlyRentInvalid && !mortgageRateInvalid && !postFixRateInvalid && !fixedTermYearsInvalid && cleanPostcode.length > 0
+  }, [postcodeInvalid, purchasePriceInvalid, monthlyRentInvalid, mortgageRateInvalid, postFixRateInvalid, fixedTermYearsInvalid, cleanPostcode])
 
   const matrixRows = useMemo(() => {
     if (!canSubmit) return []
@@ -206,9 +264,13 @@ export default function DashboardPage() {
       loanAmount: purchasePriceValue * 0.75,
       annualRent: monthlyRentValue * 12,
       annualCosts: finance.totalYearly,
-      initialRate: 0.061,
+      initialMortgageRate: initialMortgageRate,
+      fixedTermYears,
+      mortgageType: mortgage.mortgageType,
+      postFixRateAssumption,
       annualCashflowConservative: monthlyRentValue * 12 * 0.05,
       annualCashflowMarketing: monthlyRentValue * 12 * 0.08,
+      investedCash: finance.totalRequiredToComplete,
     }
 
     return [
@@ -216,7 +278,7 @@ export default function DashboardPage() {
       { label: 'Conservative · 20Y', result: runComparativeEngine(baseDeal, 20, 'conservative') },
       { label: 'Marketing · 20Y', result: runComparativeEngine(baseDeal, 20, 'marketing') },
     ]
-  }, [canSubmit, cleanPostcode, purchasePriceValue, monthlyRentValue, finance.totalYearly])
+  }, [canSubmit, cleanPostcode, purchasePriceValue, monthlyRentValue, finance.totalYearly, finance.totalRequiredToComplete, fixedTermYears, initialMortgageRate, mortgage.mortgageType, postFixRateAssumption])
 
   const advancedSummary = useMemo(() => {
     const entries = ([
@@ -237,6 +299,53 @@ export default function DashboardPage() {
 
     return `Advanced · ${shown.join(' · ')}${remainder}`
   }, [finance])
+
+  async function handleUrlExtract() {
+    if (!listingUrl.trim()) {
+      setUrlExtractError('Paste a listing URL first.')
+      return
+    }
+
+    setUrlExtractError('')
+    setExtractingUrl(true)
+
+    try {
+      const response = await fetch('/api/intel/url-extract', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: listingUrl.trim() }),
+      })
+
+      const payload = (await response.json()) as ListingExtractResponse | { error?: string }
+      if (!response.ok) {
+        throw new Error('error' in payload ? payload.error : 'Unable to extract listing URL')
+      }
+
+      const extracted = payload as ListingExtractResponse
+      setUrlExtract(extracted)
+      setSource(extracted.source === 'unknown' ? 'URL ingest (unknown source)' : extracted.source)
+
+      if (extracted.fields.postcode.value) {
+        setPostcode(normalisePostcode(extracted.fields.postcode.value))
+      }
+      if (typeof extracted.fields.purchasePrice.value === 'number') {
+        setPurchasePrice(formatCurrencyInput(String(extracted.fields.purchasePrice.value)))
+      }
+      if (typeof extracted.fields.monthlyRent.value === 'number') {
+        setMonthlyRent(formatCurrencyInput(String(extracted.fields.monthlyRent.value)))
+      }
+      if (extracted.fields.title.value) {
+        setNotes((current) => {
+          const heading = `Listing: ${extracted.fields.title.value}`
+          return current.includes(heading) ? current : current ? `${heading}\n${current}` : heading
+        })
+      }
+    } catch (extractError) {
+      setUrlExtractError(extractError instanceof Error ? extractError.message : 'Unable to extract listing URL')
+    } finally {
+      setExtractingUrl(false)
+    }
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -279,11 +388,18 @@ export default function DashboardPage() {
         source,
         listingUrl,
         notes,
+        urlExtraction: urlExtract,
         skepticismBufferPct: 10,
         licensingProvision: {
           y1: intel.licensing?.y1 ?? 750,
           y6: intel.licensing?.y6 ?? 750,
           y11: intel.licensing?.y11 ?? 750,
+        },
+        mortgageModel: {
+          initialMortgageRate,
+          fixedTermYears,
+          mortgageType: mortgage.mortgageType,
+          postFixRateAssumption,
         },
         advancedCashflow: {
           ...advanced,
@@ -341,6 +457,9 @@ export default function DashboardPage() {
           listing_url: listingUrl,
           notes,
           intel_snapshot: intel,
+          url_extract_snapshot: urlExtract,
+          url_extract_confidence: urlExtract?.overallConfidence ?? 'low',
+          url_extract_warnings: urlExtract?.warnings ?? [],
           cashflow_snapshot: assumptionsSnapshot.advancedCashflow,
         },
       }
@@ -362,9 +481,13 @@ export default function DashboardPage() {
         loanAmount: purchasePriceValue * 0.75,
         annualRent: monthlyRentValue * 12,
         annualCosts: finance.totalYearly,
-        initialRate: 0.061,
+        initialMortgageRate,
+        fixedTermYears,
+        mortgageType: mortgage.mortgageType,
+        postFixRateAssumption,
         annualCashflowConservative: monthlyRentValue * 12 * 0.05,
         annualCashflowMarketing: monthlyRentValue * 12 * 0.08,
+        investedCash: finance.totalRequiredToComplete,
       }
 
       const fiveYear = runComparativeEngine(dealInput, 5, 'conservative')
@@ -389,8 +512,8 @@ export default function DashboardPage() {
             tax_rate: 0.19,
             inflation_rate: 0.02,
             financing_ltv: 0.75,
-            financing_interest_rate: 0.061,
-            notes: JSON.stringify({ ...assumptionsSnapshot, miniOutput: mini }),
+            financing_interest_rate: initialMortgageRate,
+            notes: JSON.stringify({ ...assumptionsSnapshot, miniOutput: mini, matrix: matrixRows.map((row) => ({ label: row.label, ...row.result })) }),
           },
           { onConflict: 'deal_id,scenario_label' },
         )
@@ -449,7 +572,7 @@ export default function DashboardPage() {
                 <form onSubmit={handleSubmit} className="space-y-2">
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
                     <label className="space-y-1 text-[11px] text-muted-foreground">
-                      <span>Postcode</span>
+                      <span className="flex items-center gap-1">Postcode{urlExtract?.fields.postcode.value ? <Badge variant={confidenceBadge(urlExtract.fields.postcode.confidence).variant}>{confidenceBadge(urlExtract.fields.postcode.confidence).label}</Badge> : null}</span>
                       <input
                         required
                         value={postcode}
@@ -462,7 +585,7 @@ export default function DashboardPage() {
                     </label>
 
                     <label className="space-y-1 text-[11px] text-muted-foreground">
-                      <span>Purchase price (£)</span>
+                      <span className="flex items-center gap-1">Purchase price (£){urlExtract?.fields.purchasePrice.value ? <Badge variant={confidenceBadge(urlExtract.fields.purchasePrice.confidence).variant}>{confidenceBadge(urlExtract.fields.purchasePrice.confidence).label}</Badge> : null}</span>
                       <input
                         required
                         inputMode="decimal"
@@ -476,7 +599,7 @@ export default function DashboardPage() {
                     </label>
 
                     <label className="space-y-1 text-[11px] text-muted-foreground">
-                      <span>Estimated monthly rent (£)</span>
+                      <span className="flex items-center gap-1">Estimated monthly rent (£){urlExtract?.fields.monthlyRent.value ? <Badge variant={confidenceBadge(urlExtract.fields.monthlyRent.confidence).variant}>{confidenceBadge(urlExtract.fields.monthlyRent.confidence).label}</Badge> : null}</span>
                       <input
                         required
                         inputMode="decimal"
@@ -487,6 +610,55 @@ export default function DashboardPage() {
                         className={moneyInputClass(monthlyRentInvalid)}
                       />
                       {monthlyRentInvalid ? <span className="text-[10px] text-dla-red">Enter a valid amount above £0.</span> : null}
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+                    <label className="space-y-1 text-[11px] text-muted-foreground">
+                      <span>Initial mortgage rate (%)</span>
+                      <input
+                        required
+                        inputMode="decimal"
+                        value={mortgage.initialMortgageRatePct}
+                        onChange={(event) => setMortgage((v) => ({ ...v, initialMortgageRatePct: event.target.value }))}
+                        onBlur={() => setMortgage((v) => ({ ...v, initialMortgageRatePct: formatPercentInput(v.initialMortgageRatePct) }))}
+                        className={moneyInputClass(mortgageRateInvalid)}
+                      />
+                    </label>
+
+                    <label className="space-y-1 text-[11px] text-muted-foreground">
+                      <span>Fixed term (years)</span>
+                      <input
+                        required
+                        inputMode="numeric"
+                        value={mortgage.fixedTermYears}
+                        onChange={(event) => setMortgage((v) => ({ ...v, fixedTermYears: event.target.value }))}
+                        className={moneyInputClass(fixedTermYearsInvalid)}
+                      />
+                    </label>
+
+                    <label className="space-y-1 text-[11px] text-muted-foreground">
+                      <span>Mortgage type</span>
+                      <select
+                        value={mortgage.mortgageType}
+                        onChange={(event) => setMortgage((v) => ({ ...v, mortgageType: event.target.value as MortgageType }))}
+                        className={moneyInputClass()}
+                      >
+                        <option value="interest-only">Interest-only</option>
+                        <option value="repayment">Repayment</option>
+                      </select>
+                    </label>
+
+                    <label className="space-y-1 text-[11px] text-muted-foreground">
+                      <span>Post-fix rate assumption (%)</span>
+                      <input
+                        required
+                        inputMode="decimal"
+                        value={mortgage.postFixRatePct}
+                        onChange={(event) => setMortgage((v) => ({ ...v, postFixRatePct: event.target.value }))}
+                        onBlur={() => setMortgage((v) => ({ ...v, postFixRatePct: formatPercentInput(v.postFixRatePct) }))}
+                        className={moneyInputClass(postFixRateInvalid)}
+                      />
                     </label>
                   </div>
 
@@ -511,6 +683,29 @@ export default function DashboardPage() {
                         className={moneyInputClass()}
                       />
                     </label>
+                  </div>
+
+                  <div className="rounded border border-border bg-panel/30 p-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleUrlExtract}
+                        disabled={extractingUrl || !listingUrl.trim()}
+                        className="rounded border border-border bg-muted px-2 py-1 text-[11px] text-foreground hover:bg-panel disabled:opacity-60"
+                      >
+                        {extractingUrl ? 'Extracting listing…' : 'Ingest listing URL (beta)'}
+                      </button>
+                      {urlExtract ? <Badge variant={confidenceBadge(urlExtract.overallConfidence).variant}>URL ingest · {confidenceBadge(urlExtract.overallConfidence).label}</Badge> : null}
+                      <span className="text-[10px] text-muted-foreground">Manual edits stay authoritative.</span>
+                    </div>
+                    {urlExtract?.warnings?.length ? (
+                      <ul className="mt-1 list-disc pl-4 text-[10px] text-dla-amber">
+                        {urlExtract.warnings.map((warning) => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {urlExtractError ? <p className="mt-1 text-[10px] text-dla-red">{urlExtractError}</p> : null}
                   </div>
 
                   <label className="space-y-1 text-[11px] text-muted-foreground">
@@ -603,6 +798,8 @@ export default function DashboardPage() {
                         <TableHead>DLA remaining</TableHead>
                         <TableHead>ETA DLA clear</TableHead>
                         <TableHead>Dividend/salary</TableHead>
+                        <TableHead>Net CoC (Yr1 / horizon)</TableHead>
+                        <TableHead>Payback</TableHead>
                         <TableHead>Cliff gauge</TableHead>
                       </TableRow>
                     </TableHeader>
